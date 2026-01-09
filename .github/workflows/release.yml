@@ -58,28 +58,39 @@ jobs:
           # Build binary
           go build -ldflags "-X 'github.com/qiniu/goc/cmd.version=${VERSION}'" -o "$OUTPUT_NAME" .
           
+          # Rename binary with platform info for release
+          BINARY_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
+          mv "$OUTPUT_NAME" "$BINARY_NAME"
+          
           # Create archive
           if [ "${{ matrix.os }}" = "windows" ]; then
             ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.zip"
-            zip "$ARCHIVE_NAME" "$OUTPUT_NAME"
+            zip "$ARCHIVE_NAME" "$BINARY_NAME"
           else
             ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
-            tar czf "$ARCHIVE_NAME" "$OUTPUT_NAME"
+            tar czf "$ARCHIVE_NAME" "$BINARY_NAME"
           fi
           
-          # Calculate checksum
-          CHECKSUM=$(md5sum "$ARCHIVE_NAME" | cut -d ' ' -f 1)
-          echo "$CHECKSUM  $ARCHIVE_NAME" > "${ARCHIVE_NAME}.md5"
+          # Calculate checksums
+          ARCHIVE_CHECKSUM=$(md5sum "$ARCHIVE_NAME" | cut -d ' ' -f 1)
+          echo "$ARCHIVE_CHECKSUM  $ARCHIVE_NAME" > "${ARCHIVE_NAME}.md5"
           
+          BINARY_CHECKSUM=$(md5sum "$BINARY_NAME" | cut -d ' ' -f 1)
+          echo "$BINARY_CHECKSUM  $BINARY_NAME" > "${BINARY_NAME}.md5"
+          
+          echo "binary_name=$BINARY_NAME" >> $GITHUB_OUTPUT
+          echo "binary_checksum=${BINARY_NAME}.md5" >> $GITHUB_OUTPUT
           echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
-          echo "checksum_file=${ARCHIVE_NAME}.md5" >> $GITHUB_OUTPUT
+          echo "archive_checksum=${ARCHIVE_NAME}.md5" >> $GITHUB_OUTPUT
 
-      - name: Upload release asset
+      - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: |
+            ${{ steps.build.outputs.binary_name }}
+            ${{ steps.build.outputs.binary_checksum }}
             ${{ steps.build.outputs.archive_name }}
-            ${{ steps.build.outputs.checksum_file }}
+            ${{ steps.build.outputs.archive_checksum }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
