@@ -8,6 +8,8 @@ jobs:
   build:
     name: Build for ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -83,6 +85,15 @@ jobs:
           echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
           echo "archive_checksum=${ARCHIVE_NAME}.md5" >> $GITHUB_OUTPUT
 
+      - name: Verify release exists
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          echo "Checking if release $TAG exists..."
+          if [ -z "$TAG" ]; then
+            echo "Error: Release tag name is empty"
+            exit 1
+          fi
+          
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
@@ -92,5 +103,7 @@ jobs:
             ${{ steps.build.outputs.binary_checksum }}
             ${{ steps.build.outputs.archive_name }}
             ${{ steps.build.outputs.archive_checksum }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
