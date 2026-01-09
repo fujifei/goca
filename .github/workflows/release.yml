@@ -1,123 +1,85 @@
+name: Release
+
 on:
   release:
-    types: [published,edited]
-name: Build Release
+    types: [created]
+
 jobs:
-  release-darwin-amd64:
-    name: release darwin/amd64
+  build:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            suffix: ""
+          - os: darwin
+            arch: amd64
+            suffix: ""
+          - os: darwin
+            arch: arm64
+            suffix: ""
+          - os: windows
+            arch: amd64
+            suffix: ".exe"
+    
     steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: amd64
-        GOOS: darwin
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-  release-darwin-arm64:
-    name: release darwin/arm64
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: arm64
-        GOOS: darwin
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
 
-  release-linux-386:
-    name: release linux/386
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: "386"
-        GOOS: linux
+      - name: Get release version
+        id: get_version
+        run: |
+          # Try to get version from release tag, fallback to GITHUB_REF
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
 
-  release-linux-amd64:
-    name: release linux/amd64
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: amd64
-        GOOS: linux
+      - name: Build
+        id: build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          OUTPUT_NAME="goc${{ matrix.suffix }}"
+          
+          # Build binary
+          go build -ldflags "-X 'github.com/qiniu/goc/cmd.version=${VERSION}'" -o "$OUTPUT_NAME" .
+          
+          # Create archive
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.zip"
+            zip "$ARCHIVE_NAME" "$OUTPUT_NAME"
+          else
+            ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+            tar czf "$ARCHIVE_NAME" "$OUTPUT_NAME"
+          fi
+          
+          # Calculate checksum
+          CHECKSUM=$(md5sum "$ARCHIVE_NAME" | cut -d ' ' -f 1)
+          echo "$CHECKSUM  $ARCHIVE_NAME" > "${ARCHIVE_NAME}.md5"
+          
+          echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
+          echo "checksum_file=${ARCHIVE_NAME}.md5" >> $GITHUB_OUTPUT
 
-  release-linux-arm64:
-    name: release linux/arm64
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: arm64
-        GOOS: linux
-
-  release-linux-mips64le:
-    name: release linux/mips64le
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: mips64le
-        GOOS: linux
-
-  release-linux-riscv64:
-    name: release linux/riscv64
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@master
-    - name: Install Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.19.x
-    - name: compile and release
-      run: |
-        ./ci-build.sh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GOARCH: riscv64
-        GOOS: linux
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            ${{ steps.build.outputs.archive_name }}
+            ${{ steps.build.outputs.checksum_file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
