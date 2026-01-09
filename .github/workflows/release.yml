@@ -54,24 +54,58 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
+          set -e  # Exit on error
+          
           VERSION="${{ steps.get_version.outputs.version }}"
           OUTPUT_NAME="goc${{ matrix.suffix }}"
           
+          echo "Building for ${{ matrix.os }}/${{ matrix.arch }}"
+          echo "Version: ${VERSION}"
+          echo "Output name: ${OUTPUT_NAME}"
+          
           # Build binary
+          echo "Running: go build -ldflags \"-X 'github.com/qiniu/goc/cmd.version=${VERSION}'\" -o \"${OUTPUT_NAME}\" ."
           go build -ldflags "-X 'github.com/qiniu/goc/cmd.version=${VERSION}'" -o "$OUTPUT_NAME" .
+          
+          # Verify binary was created
+          if [ ! -f "$OUTPUT_NAME" ]; then
+            echo "Error: Binary file $OUTPUT_NAME was not created!"
+            exit 1
+          fi
+          
+          echo "Binary created successfully: $(ls -lh $OUTPUT_NAME)"
           
           # Rename binary with platform info for release
           BINARY_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}"
           mv "$OUTPUT_NAME" "$BINARY_NAME"
           
+          # Verify renamed binary exists
+          if [ ! -f "$BINARY_NAME" ]; then
+            echo "Error: Renamed binary file $BINARY_NAME does not exist!"
+            exit 1
+          fi
+          
+          echo "Binary renamed to: $BINARY_NAME"
+          echo "Binary size: $(ls -lh $BINARY_NAME | awk '{print $5}')"
+          
           # Create archive
           if [ "${{ matrix.os }}" = "windows" ]; then
             ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.zip"
+            echo "Creating zip archive: $ARCHIVE_NAME"
             zip "$ARCHIVE_NAME" "$BINARY_NAME"
           else
             ARCHIVE_NAME="goc-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+            echo "Creating tar.gz archive: $ARCHIVE_NAME"
             tar czf "$ARCHIVE_NAME" "$BINARY_NAME"
           fi
+          
+          # Verify archive was created
+          if [ ! -f "$ARCHIVE_NAME" ]; then
+            echo "Error: Archive file $ARCHIVE_NAME was not created!"
+            exit 1
+          fi
+          
+          echo "Archive created: $(ls -lh $ARCHIVE_NAME)"
           
           # Calculate checksums
           ARCHIVE_CHECKSUM=$(md5sum "$ARCHIVE_NAME" | cut -d ' ' -f 1)
@@ -80,10 +114,31 @@ jobs:
           BINARY_CHECKSUM=$(md5sum "$BINARY_NAME" | cut -d ' ' -f 1)
           echo "$BINARY_CHECKSUM  $BINARY_NAME" > "${BINARY_NAME}.md5"
           
+          # List all files to be uploaded
+          echo "Files to upload:"
+          ls -lh "$BINARY_NAME" "${BINARY_NAME}.md5" "$ARCHIVE_NAME" "${ARCHIVE_NAME}.md5"
+          
+          # Verify all files exist before setting outputs
+          for file in "$BINARY_NAME" "${BINARY_NAME}.md5" "$ARCHIVE_NAME" "${ARCHIVE_NAME}.md5"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Required file $file does not exist!"
+              exit 1
+            fi
+          done
+          
+          echo "All files verified successfully"
+          
+          # Set outputs
           echo "binary_name=$BINARY_NAME" >> $GITHUB_OUTPUT
           echo "binary_checksum=${BINARY_NAME}.md5" >> $GITHUB_OUTPUT
           echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
           echo "archive_checksum=${ARCHIVE_NAME}.md5" >> $GITHUB_OUTPUT
+          
+          echo "Build outputs set:"
+          echo "  binary_name=$BINARY_NAME"
+          echo "  binary_checksum=${BINARY_NAME}.md5"
+          echo "  archive_name=$ARCHIVE_NAME"
+          echo "  archive_checksum=${ARCHIVE_NAME}.md5"
 
       - name: Verify release exists
         run: |
@@ -94,6 +149,27 @@ jobs:
             exit 1
           fi
           
+      - name: Verify files before upload
+        run: |
+          echo "Verifying files exist before upload..."
+          echo "Binary: ${{ steps.build.outputs.binary_name }}"
+          echo "Binary checksum: ${{ steps.build.outputs.binary_checksum }}"
+          echo "Archive: ${{ steps.build.outputs.archive_name }}"
+          echo "Archive checksum: ${{ steps.build.outputs.archive_checksum }}"
+          
+          for file in "${{ steps.build.outputs.binary_name }}" \
+                      "${{ steps.build.outputs.binary_checksum }}" \
+                      "${{ steps.build.outputs.archive_name }}" \
+                      "${{ steps.build.outputs.archive_checksum }}"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: File $file does not exist!"
+              exit 1
+            fi
+            echo "✓ $file exists ($(ls -lh "$file" | awk '{print $5}'))"
+          done
+          
+          echo "All files verified, ready to upload"
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
